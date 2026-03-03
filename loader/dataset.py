@@ -19,7 +19,8 @@ class Stage1DatasetSpec:
     target_channels: Sequence[int]
     cloud_threshold: float = 30.0
     min_valid_ratio: float = 0.95
-    max_nan_ratio: float = 0.0
+    # Allow NaN/Inf-containing patches by default; preprocessing replaces them with 0.
+    max_nan_ratio: float = 1.0
     top_n: int | None = None
 
 
@@ -84,4 +85,3 @@ class Stage1PatchDataset(Dataset):
             "valid_mask": mask_tensor,
             "patch_id": row["patch_id"],
         }
-

@@ -29,6 +29,7 @@ def build_stage1_datasets(
     target_channels,
     cloud_threshold: float,
     min_valid_ratio: float,
+    max_nan_ratio: float,
     top_n: int,
     seed: int,
 ):
@@ -38,7 +39,7 @@ def build_stage1_datasets(
         target_channels=target_channels,
         cloud_threshold=cloud_threshold,
         min_valid_ratio=min_valid_ratio,
-        max_nan_ratio=0.0,
+        max_nan_ratio=max_nan_ratio,
         top_n=top_n,
     )
     rows = filter_index_rows(rows, spec)
@@ -122,4 +123,3 @@ def prepare_output_dirs(base_output: str | Path, exp_id: str) -> Dict[str, Path]
 
 def save_resolved_configs(out_root: Path, dataset_cfg: Dict, train_cfg: Dict):
     dump_config(out_root / "config_resolved.yaml", {"dataset": dataset_cfg, "train": train_cfg})
-

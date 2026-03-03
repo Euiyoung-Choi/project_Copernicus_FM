@@ -117,6 +117,7 @@ def main() -> int:
     target_channels = train_cfg["io"]["target_channels"]
     cloud_threshold = float(train_cfg["masking"].get("cloud_threshold", 30.0))
     min_valid_ratio = float(train_cfg.get("subset_min_valid_ratio", 0.0))
+    max_nan_ratio = float(train_cfg.get("subset_max_nan_ratio", 1.0))
     top_n = int(train_cfg["train"]["subset"].get("n_patches", 32))
     seed = int(train_cfg["train"]["subset"].get("seed", args.seed))
 
@@ -126,6 +127,7 @@ def main() -> int:
         target_channels=target_channels,
         cloud_threshold=cloud_threshold,
         min_valid_ratio=min_valid_ratio,
+        max_nan_ratio=max_nan_ratio,
         top_n=top_n,
         seed=seed,
     )
