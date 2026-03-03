@@ -17,7 +17,7 @@ from scripts.common import dump_config, ensure_dir
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Step 1: Discover GeoTIFF scenes (exclude macOS sidecars).")
-    ap.add_argument("--data-root", default="~/data_2/SARtoRGB/Korea/", help="Dataset root directory.")
+    ap.add_argument("--data-root", default="/home/ey/data_2/SARtoRGB/Korea/", help="Dataset root directory.")
     ap.add_argument("--glob", default="*.tif", help="Glob for scene discovery (default: *.tif).")
     ap.add_argument("--out-dir", default="output/step01_discovery", help="Output directory.")
     args = ap.parse_args()

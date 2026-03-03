@@ -70,7 +70,7 @@
 
 ### 3.1 데이터 저장소 및 파일 구조 (Data Storage)
 
-- **로컬 경로**: `~/data_2/SARtoRGB/Korea/`
+- **로컬 경로**: `/home/ey/data_2/SARtoRGB/Korea/`
 - **파일 형식**: 개별 `.tif` (GeoTIFF, multi-band raster)
 - **파일 개수**: 총 **1,232** tiles
 - **데이터 타입**: Float32 (연산 효율을 위해 로드 시 `float32` 변환 권장)
@@ -216,7 +216,7 @@ class KoreaSatelliteDataset(Dataset):
 ## 6. Dataset Summary (for Codex / Research Log)
 
 - **Total Samples**: 1,232 tiles for tile
-- **Local Path**: `~/data_2/SARtoRGB/Korea/`
+- **Local Path**: `/home/ey/data_2/SARtoRGB/Korea/`
 - **Input Dimension**: $7 \times H \times W$ (각 타일은 대략 256~512px 범위)
 - **Resolution**: 10 m/pixel
 - **Channels**: S2(B4,B3,B2,B8) + S1(VV,VH) + Fmask(cloud probability)

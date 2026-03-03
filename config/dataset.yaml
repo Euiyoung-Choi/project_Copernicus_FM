@@ -1,4 +1,4 @@
-data_root: "~/data_2/SARtoRGB/Korea/"
+data_root: "/home/ey/data_2/SARtoRGB/Korea/"
 scene_glob: "*.tif"
 
 # If provided, only these scene paths are used.
@@ -25,4 +25,3 @@ thresholds:
   cloud_pixel: 60.0
   stage1_valid_ratio_min: 0.95
   stage2_cloud_ratio_min: 0.10
-

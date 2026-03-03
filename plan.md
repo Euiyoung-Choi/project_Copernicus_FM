@@ -36,7 +36,7 @@
 
 ### 1.2 제약/가정(Assumptions)
 
-- 데이터 경로(로컬): `~/data_2/SARtoRGB/Korea/`
+- 데이터 경로(로컬): `/home/ey/data_2/SARtoRGB/Korea/`
 - 파일: `*.tif` (BigTIFF GeoTIFF, multi-band). **여러 개의 scene 파일**이 존재하며(현재 로컬에서 확인된 예: 12개), 학습 샘플 수는 파일 개수와 별개로 **window 기반 patch 인덱싱 결과로 결정**된다.
 - 기본 샘플 단위: 한 scene에서 추출한 **256×256 patch(window)** (`patch_size=256`, `stride=256`)
 - 텐서(패치 로딩 결과): `(7, 256, 256)` / 10m per pixel
@@ -111,7 +111,7 @@ output/
 
 ### 3.0 데이터 단위 정의(고정)
 
-- **scene(file)**: `~/data_2/SARtoRGB/Korea/*.tif` 중 하나
+- **scene(file)**: `/home/ey/data_2/SARtoRGB/Korea/*.tif` 중 하나
 - **patch(sample)**: scene에서 `patch_size=256`, `stride=256`으로 추출한 window
 - patch는 다음 schema로 인덱싱한다(고정):
   - `scene_path`, `x`, `y`, `w=256`, `h=256`, `patch_id`
@@ -180,7 +180,7 @@ output/
 
 **Input**
 
-- 로컬 데이터 경로: `~/data_2/SARtoRGB/Korea/` (전체를 쓰되, 처음엔 “읽기만”)
+- 로컬 데이터 경로: `/home/ey/data_2/SARtoRGB/Korea/` (전체를 쓰되, 처음엔 “읽기만”)
 
 **To-do (정밀 체크리스트)**
 

@@ -1,5 +1,10 @@
 stage: "stage1"
 model: "copernicus_fm"
+copernicus_fm:
+  repo_subdir: "Copernicus-FM"
+  variant: "vit_base_varlang_e100"
+  checkpoint_path: null   # set absolute path to override auto-discovery
+  strict_load: false
 
 io:
   input_channels: [4, 5]          # VV, VH
@@ -15,4 +20,3 @@ train:
     mode: "index_top_n"
     n_patches: 64
     seed: 0
-

@@ -20,11 +20,25 @@ python -m pip install -r requirements.txt
 2) Step 1: discover scenes (excludes `._*.tif`)
 
 ```bash
-python scripts/01_discover_scenes.py --data-root ~/data_2/SARtoRGB/Korea
+python scripts/01_discover_scenes.py --data-root /home/ey/data_2/SARtoRGB/Korea
 ```
 
 3) Step 2: build patch index for the first scene (requires `rasterio`)
 
 ```bash
-python scripts/02_build_index_first_scene.py --data-root ~/data_2/SARtoRGB/Korea --limit-patches 64
+python scripts/02_build_index_first_scene.py --data-root /home/ey/data_2/SARtoRGB/Korea --limit-patches 64
+```
+
+## Copernicus-FM checkpoint wiring
+
+List locally discoverable Copernicus-FM checkpoints:
+
+```bash
+python scripts/03_check_copernicus_fm.py
+```
+
+Try model construction + checkpoint load:
+
+```bash
+python scripts/03_check_copernicus_fm.py --load --variant vit_base_varlang_e100
 ```

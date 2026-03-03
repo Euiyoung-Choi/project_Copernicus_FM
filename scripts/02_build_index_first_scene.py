@@ -48,7 +48,7 @@ def _maybe_write_histograms(out_dir: Path, records):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Step 3: Build patch index for first scene (256x256 windows).")
-    ap.add_argument("--data-root", default="~/data_2/SARtoRGB/Korea/", help="Dataset root directory.")
+    ap.add_argument("--data-root", default="/home/ey/data_2/SARtoRGB/Korea/", help="Dataset root directory.")
     ap.add_argument("--glob", default="*.tif", help="Scene glob pattern.")
     ap.add_argument("--patch-size", type=int, default=256)
     ap.add_argument("--stride", type=int, default=256)
