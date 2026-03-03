@@ -8,3 +8,5 @@ PyYAML>=6.0
 matplotlib>=3.7
 rasterio>=1.3
 torch>=2.1
+timm>=0.9
+einops>=0.7

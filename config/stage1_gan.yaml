@@ -1,5 +1,6 @@
 stage: "stage1"
 model: "gan_pix2pix"
+subset_min_valid_ratio: 0.0
 
 io:
   # Input: S1 only
@@ -8,7 +9,7 @@ io:
   target_channels: [0, 1, 2, 3]   # B4, B3, B2, B8 (0-based indices)
 
 masking:
-  cloud_threshold: 60.0
+  cloud_threshold: 30.0
   loss_valid_only: true
   metrics_valid_only: true
 
@@ -17,4 +18,3 @@ train:
     mode: "index_top_n"
     n_patches: 64
     seed: 0
-

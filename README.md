@@ -42,3 +42,17 @@ Try model construction + checkpoint load:
 ```bash
 python scripts/03_check_copernicus_fm.py --load --variant vit_base_varlang_e100
 ```
+
+## Stage 1 tiny runs
+
+GAN baseline:
+
+```bash
+python scripts/02_train_stage1_gan.py --dataset-config config/dataset.yaml --train-config config/stage1_gan.yaml
+```
+
+Copernicus-FM + decoder:
+
+```bash
+python scripts/02_train_stage1_copfm.py --dataset-config config/dataset.yaml --train-config config/stage1_copfm.yaml
+```

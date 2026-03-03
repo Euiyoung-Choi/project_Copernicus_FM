@@ -148,6 +148,7 @@ def build_copernicus_fm(
     checkpoint_path: Optional[str | Path] = None,
     num_classes: int = 0,
     strict: bool = False,
+    model_kwargs: Optional[Dict] = None,
 ):
     """
     Build Copernicus-FM ViT backbone and load local checkpoint.
@@ -159,11 +160,12 @@ def build_copernicus_fm(
     """
     repo_root_path = Path(repo_root).resolve()
     model_vit = _import_upstream_model_vit(repo_root_path)
+    model_kwargs = model_kwargs or {}
 
     if "large" in variant:
-        model = model_vit.vit_large_patch16(num_classes=num_classes, global_pool=False)
+        model = model_vit.vit_large_patch16(num_classes=num_classes, global_pool=False, **model_kwargs)
     else:
-        model = model_vit.vit_base_patch16(num_classes=num_classes, global_pool=False)
+        model = model_vit.vit_base_patch16(num_classes=num_classes, global_pool=False, **model_kwargs)
 
     checkpoint = resolve_weight_path(repo_root_path, variant=variant, explicit_weight_path=checkpoint_path)
     state_dict = load_checkpoint_state_dict(checkpoint)
