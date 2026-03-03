@@ -95,9 +95,26 @@ def save_sample_rgb(output_dir: Path, sample_name: str, inp, target, pred, valid
     pred = to_np(pred)
     valid_mask = to_np(valid_mask)
 
+    def stretch_rgb(rgb: np.ndarray, low_q: float = 2.0, high_q: float = 98.0) -> np.ndarray:
+        # Visualization-only contrast stretch; does not affect training/eval values.
+        out = rgb.astype(np.float32, copy=True)
+        for ch in range(out.shape[2]):
+            plane = out[:, :, ch]
+            lo = np.percentile(plane, low_q)
+            hi = np.percentile(plane, high_q)
+            if hi <= lo:
+                out[:, :, ch] = np.clip(plane, 0.0, 1.0)
+            else:
+                out[:, :, ch] = np.clip((plane - lo) / (hi - lo), 0.0, 1.0)
+        # Slight gamma correction for readability.
+        out = np.power(out, 0.8)
+        return np.clip(out, 0.0, 1.0)
+
     # target/pred: (4,H,W), RGB uses first 3 channels in this ordering.
-    gt_rgb = np.clip(np.transpose(target[:3], (1, 2, 0)), 0, 1)
-    pd_rgb = np.clip(np.transpose(pred[:3], (1, 2, 0)), 0, 1)
+    gt_rgb_raw = np.clip(np.transpose(target[:3], (1, 2, 0)), 0, 1)
+    pd_rgb_raw = np.clip(np.transpose(pred[:3], (1, 2, 0)), 0, 1)
+    gt_rgb = stretch_rgb(gt_rgb_raw)
+    pd_rgb = stretch_rgb(pd_rgb_raw)
     diff = np.clip(np.abs(pd_rgb - gt_rgb), 0, 1)
     mask = valid_mask[0]
 

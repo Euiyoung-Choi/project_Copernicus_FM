@@ -26,8 +26,9 @@ masking:
   metrics_valid_only: true
 
 spectral:
-  wave_list: [5600.0, 5600.0]   # placeholder metadata for SAR VV/VH
-  bandwidth: [10.0, 10.0]
+  # S1 convention used in Copernicus-Bench configs
+  wave_list: [50000000.0, 50000000.0]
+  bandwidth: [1000000000.0, 1000000000.0]
 
 train:
   subset:
