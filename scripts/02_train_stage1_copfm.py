@@ -13,7 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from model.copernicus_fm import build_copernicus_fm
-from model.losses import masked_l1_loss
+from model.losses import masked_l1_loss, masked_ssim
 from scripts.train_stage1_common import (
     build_stage1_datasets,
     eval_metrics,
@@ -144,10 +144,19 @@ def _build_wave_bw(train_cfg):
     return wave, bw
 
 
-def train_one_epoch(backbone, decoder, loader, optimizer, device, wave_list, bandwidth):
+def train_one_epoch(
+    backbone,
+    decoder,
+    loader,
+    optimizer,
+    device,
+    wave_list,
+    bandwidth,
+    lambda_ssim: float,
+):
     backbone.eval()
     decoder.train()
-    meter = {"l1": 0.0, "n": 0}
+    meter = {"total": 0.0, "l1": 0.0, "ssim_term": 0.0, "n": 0}
 
     for batch in loader:
         inp = batch["input"].to(device)
@@ -167,16 +176,25 @@ def train_one_epoch(backbone, decoder, loader, optimizer, device, wave_list, ban
         feat = intermediate[-1]
         pred = decoder(feat)
 
-        loss = masked_l1_loss(pred, tgt, mask)
+        loss_l1 = masked_l1_loss(pred, tgt, mask)
+        ssim_score = masked_ssim(pred, tgt, mask)
+        loss_ssim_term = 1.0 - ssim_score
+        loss = loss_l1 + lambda_ssim * loss_ssim_term
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        meter["l1"] += float(loss.item())
+        meter["total"] += float(loss.item())
+        meter["l1"] += float(loss_l1.item())
+        meter["ssim_term"] += float(loss_ssim_term.item())
         meter["n"] += 1
 
     n = max(1, meter["n"])
-    return {"l1": meter["l1"] / n}
+    return {
+        "total": meter["total"] / n,
+        "l1": meter["l1"] / n,
+        "ssim_term": meter["ssim_term"] / n,
+    }
 
 
 @torch.no_grad()
@@ -244,6 +262,8 @@ def main() -> int:
     batch_size = int(runtime.get("batch_size", BATCH_SIZE))
     num_workers = int(runtime.get("num_workers", NUM_WORKERS))
     lr = float(runtime.get("lr", LR))
+    weight_decay = float(runtime.get("weight_decay", 1e-4))
+    lambda_ssim = float(train_cfg.get("loss", {}).get("lambda_ssim", 0.2))
     min_valid_pixel_ratio_for_metrics = float(
         train_cfg.get("eval", {}).get("min_valid_pixel_ratio_for_metrics", MIN_VALID_PIXEL_RATIO_FOR_METRICS)
     )
@@ -297,7 +317,7 @@ def main() -> int:
         out_channels=len(target_channels),
     )
     decoder = decoder.to(device)
-    optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(decoder.parameters(), lr=lr, weight_decay=weight_decay)
     wave_list, bandwidth = _build_wave_bw(train_cfg)
 
     final_train = {}
@@ -305,7 +325,16 @@ def main() -> int:
     last_sample = None
     last_val_metrics = None
     for epoch_idx in range(1, epochs + 1):
-        final_train = train_one_epoch(backbone, decoder, train_loader, optimizer, device, wave_list, bandwidth)
+        final_train = train_one_epoch(
+            backbone,
+            decoder,
+            train_loader,
+            optimizer,
+            device,
+            wave_list,
+            bandwidth,
+            lambda_ssim=lambda_ssim,
+        )
         val_metrics, sample = evaluate(
             backbone,
             decoder,
@@ -323,7 +352,9 @@ def main() -> int:
         last_val_metrics = val_metrics
         print(
             f"[epoch {epoch_idx}/{epochs}] "
-            f"l1={final_train['l1']:.6f} val_psnr={val_metrics['psnr']} val_ssim={val_metrics['ssim']}"
+            f"total={final_train['total']:.6f} l1={final_train['l1']:.6f} "
+            f"ssim_term={final_train['ssim_term']:.6f} "
+            f"val_psnr={val_metrics['psnr']} val_ssim={val_metrics['ssim']}"
         )
 
     if (not save_val_png_each_epoch) and last_sample is not None:
@@ -340,6 +371,8 @@ def main() -> int:
         "cloud_threshold_valid_pixel": cloud_threshold,
         "checkpoint": str(loaded_ckpt),
         "load_state_dict_msg": str(load_msg),
+        "optimizer": {"name": "AdamW", "lr": lr, "weight_decay": weight_decay},
+        "loss": {"name": "masked_l1_plus_ssim", "lambda_ssim": lambda_ssim},
         "train": final_train,
         "val": last_val_metrics,
         "history": history,
