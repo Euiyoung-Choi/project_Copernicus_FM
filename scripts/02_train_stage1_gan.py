@@ -139,6 +139,7 @@ def main() -> int:
     min_valid_pixel_ratio_for_metrics = float(
         train_cfg.get("eval", {}).get("min_valid_pixel_ratio_for_metrics", MIN_VALID_PIXEL_RATIO_FOR_METRICS)
     )
+    save_val_png_each_epoch = bool(train_cfg.get("eval", {}).get("save_val_png_each_epoch", True))
 
     ds_train, ds_val, kept_n = build_stage1_datasets(
         index_path=index_path,
@@ -165,17 +166,31 @@ def main() -> int:
     opt_d = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(0.5, 0.999))
 
     final_train = {}
-    for _ in range(epochs):
+    history = []
+    last_sample = None
+    last_val_metrics = None
+    for epoch_idx in range(1, epochs + 1):
         final_train = train_one_epoch(generator, discriminator, train_loader, opt_g, opt_d, device, lambda_l1)
+        val_metrics, sample = evaluate(
+            generator,
+            val_loader,
+            device,
+            min_valid_pixel_ratio_for_metrics=min_valid_pixel_ratio_for_metrics,
+        )
+        if save_val_png_each_epoch and sample is not None:
+            patch_id, inp, tgt, pred, mask = sample
+            save_sample_rgb(out["samples"], f"epoch{epoch_idx:03d}_{patch_id}_gan", inp, tgt, pred, mask)
+        history.append({"epoch": epoch_idx, "train": final_train, "val": val_metrics})
+        last_sample = sample
+        last_val_metrics = val_metrics
+        print(
+            f"[epoch {epoch_idx}/{epochs}] "
+            f"g_total={final_train['g_total']:.5f} g_l1={final_train['g_l1']:.5f} d={final_train['d_total']:.5f} "
+            f"val_psnr={val_metrics['psnr']} val_ssim={val_metrics['ssim']}"
+        )
 
-    val_metrics, sample = evaluate(
-        generator,
-        val_loader,
-        device,
-        min_valid_pixel_ratio_for_metrics=min_valid_pixel_ratio_for_metrics,
-    )
-    if sample is not None:
-        patch_id, inp, tgt, pred, mask = sample
+    if (not save_val_png_each_epoch) and last_sample is not None:
+        patch_id, inp, tgt, pred, mask = last_sample
         save_sample_rgb(out["samples"], f"{patch_id}_gan", inp, tgt, pred, mask)
 
     metrics_payload = {
@@ -186,7 +201,8 @@ def main() -> int:
         "val_size": len(ds_val),
         "cloud_threshold_valid_pixel": cloud_threshold,
         "train": final_train,
-        "val": val_metrics,
+        "val": last_val_metrics,
+        "history": history,
     }
     write_metrics_json(out["root"] / "metrics.json", metrics_payload)
     torch.save(generator.state_dict(), out["root"] / "gan_generator.pt")

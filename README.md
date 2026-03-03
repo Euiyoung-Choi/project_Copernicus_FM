@@ -29,6 +29,10 @@ python scripts/01_discover_scenes.py
 python scripts/02_build_index_first_scene.py
 ```
 
+Notes:
+- `scripts/02_build_index_first_scene.py` uses `INDEX_SCOPE` at file top.
+- Set `INDEX_SCOPE = "all"` for all scenes or `"first"` for first scene only.
+
 ## Copernicus-FM checkpoint wiring
 
 List locally discoverable Copernicus-FM checkpoints:
@@ -56,3 +60,7 @@ Copernicus-FM + decoder:
 ```bash
 python scripts/02_train_stage1_copfm.py
 ```
+
+Notes:
+- Per-epoch val sample PNG is saved to `output/<exp_id>/samples/` when `eval.save_val_png_each_epoch: true`.
+- Per-epoch train/val metrics are stored under `metrics.json` -> `history`.

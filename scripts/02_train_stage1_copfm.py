@@ -247,6 +247,7 @@ def main() -> int:
     min_valid_pixel_ratio_for_metrics = float(
         train_cfg.get("eval", {}).get("min_valid_pixel_ratio_for_metrics", MIN_VALID_PIXEL_RATIO_FOR_METRICS)
     )
+    save_val_png_each_epoch = bool(train_cfg.get("eval", {}).get("save_val_png_each_epoch", True))
 
     ds_train, ds_val, kept_n = build_stage1_datasets(
         index_path=index_path,
@@ -300,20 +301,33 @@ def main() -> int:
     wave_list, bandwidth = _build_wave_bw(train_cfg)
 
     final_train = {}
-    for _ in range(epochs):
+    history = []
+    last_sample = None
+    last_val_metrics = None
+    for epoch_idx in range(1, epochs + 1):
         final_train = train_one_epoch(backbone, decoder, train_loader, optimizer, device, wave_list, bandwidth)
+        val_metrics, sample = evaluate(
+            backbone,
+            decoder,
+            val_loader,
+            device,
+            wave_list,
+            bandwidth,
+            min_valid_pixel_ratio_for_metrics=min_valid_pixel_ratio_for_metrics,
+        )
+        if save_val_png_each_epoch and sample is not None:
+            patch_id, inp, tgt, pred, mask = sample
+            save_sample_rgb(out["samples"], f"epoch{epoch_idx:03d}_{patch_id}_copfm", inp, tgt, pred, mask)
+        history.append({"epoch": epoch_idx, "train": final_train, "val": val_metrics})
+        last_sample = sample
+        last_val_metrics = val_metrics
+        print(
+            f"[epoch {epoch_idx}/{epochs}] "
+            f"l1={final_train['l1']:.6f} val_psnr={val_metrics['psnr']} val_ssim={val_metrics['ssim']}"
+        )
 
-    val_metrics, sample = evaluate(
-        backbone,
-        decoder,
-        val_loader,
-        device,
-        wave_list,
-        bandwidth,
-        min_valid_pixel_ratio_for_metrics=min_valid_pixel_ratio_for_metrics,
-    )
-    if sample is not None:
-        patch_id, inp, tgt, pred, mask = sample
+    if (not save_val_png_each_epoch) and last_sample is not None:
+        patch_id, inp, tgt, pred, mask = last_sample
         save_sample_rgb(out["samples"], f"{patch_id}_copfm", inp, tgt, pred, mask)
 
     metrics_payload = {
@@ -327,7 +341,8 @@ def main() -> int:
         "checkpoint": str(loaded_ckpt),
         "load_state_dict_msg": str(load_msg),
         "train": final_train,
-        "val": val_metrics,
+        "val": last_val_metrics,
+        "history": history,
     }
     write_metrics_json(out["root"] / "metrics.json", metrics_payload)
     torch.save(decoder.state_dict(), out["root"] / "copfm_decoder.pt")

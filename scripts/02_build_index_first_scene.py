@@ -18,7 +18,8 @@ from scripts.common import dump_config, ensure_dir, load_config
 # Runtime settings (edit here, no argparse)
 # -----------------------------------------------------------------------------
 DATASET_CONFIG_PATH = "config/dataset.yaml"
-INDEX_OUT = "output/index/first_scene.index.jsonl"
+INDEX_SCOPE = "all"  # "first" | "all"
+INDEX_OUT = "output/index/all_scenes.index.jsonl"
 STATS_OUT_DIR = "output/step03_index_stats"
 LIMIT_PATCHES = None  # e.g. 64 for quick run, None for all
 
@@ -65,6 +66,7 @@ def main() -> int:
     if not scenes:
         raise SystemExit("No scenes found.")
     first_scene = pick_first_scene(scenes)
+    target_scenes = [first_scene] if INDEX_SCOPE == "first" else list(scenes)
 
     stats_dir = ensure_dir(STATS_OUT_DIR)
     dump_config(
@@ -73,7 +75,9 @@ def main() -> int:
             "step": "step02_build_index_first_scene",
             "data_root": data_root,
             "glob": glob,
+            "index_scope": INDEX_SCOPE,
             "first_scene": str(first_scene),
+            "num_target_scenes": len(target_scenes),
             "patch_size": patch_size,
             "stride": stride,
             "cloud_threshold_T": cloud_threshold,
@@ -83,13 +87,16 @@ def main() -> int:
         },
     )
 
-    records = build_patch_index_for_scene(
-        first_scene,
-        patch_size=patch_size,
-        stride=stride,
-        cloud_threshold=cloud_threshold,
-        limit_patches=LIMIT_PATCHES,
-    )
+    records = []
+    for scene in target_scenes:
+        scene_records = build_patch_index_for_scene(
+            scene,
+            patch_size=patch_size,
+            stride=stride,
+            cloud_threshold=cloud_threshold,
+            limit_patches=LIMIT_PATCHES,
+        )
+        records.extend(scene_records)
     write_index_jsonl(records, INDEX_OUT)
 
     summary = summarize_records(records)
@@ -98,7 +105,9 @@ def main() -> int:
 
     decision_md = [
         f"date: {datetime.now().isoformat(timespec='seconds')}",
+        f"index_scope: {INDEX_SCOPE}",
         f"first_scene: {first_scene}",
+        f"num_target_scenes: {len(target_scenes)}",
         f"patch_size: {patch_size}",
         f"stride: {stride}",
         f"cloud_threshold_T: {cloud_threshold}",
