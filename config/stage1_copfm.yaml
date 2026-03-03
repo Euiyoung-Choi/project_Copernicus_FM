@@ -25,14 +25,14 @@ spectral:
 train:
   subset:
     mode: "index_top_n"
-    n_patches: 64
+    n_patches: 256
     seed: 0
 
 runtime:
-  epochs: 2
-  batch_size: 4
+  epochs: 12
+  batch_size: 8
   num_workers: 0
-  lr: 0.001
+  lr: 0.0003
   seed: 0
 
 eval:
