@@ -64,6 +64,74 @@ class UpDecoder(nn.Module):
         return self.net(x)
 
 
+class TransHybridDecoder(nn.Module):
+    def __init__(
+        self,
+        in_channels: int = 768,
+        out_channels: int = 4,
+        trans_dim: int = 384,
+        trans_heads: int = 8,
+        trans_layers: int = 4,
+        trans_ffn_ratio: int = 4,
+    ):
+        super().__init__()
+        self.proj_in = nn.Conv2d(in_channels, trans_dim, kernel_size=1)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=trans_dim,
+            nhead=trans_heads,
+            dim_feedforward=trans_dim * trans_ffn_ratio,
+            dropout=0.0,
+            batch_first=True,
+            norm_first=True,
+            activation="gelu",
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=trans_layers)
+        self.proj_out = nn.Sequential(
+            nn.Conv2d(trans_dim, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),  # 16->32
+            nn.Conv2d(256, 128, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),  # 32->64
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),  # 64->128
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),  # 128->256
+            nn.Conv2d(32, out_channels, kernel_size=3, padding=1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        # x: [B, C, 16, 16]
+        x = self.proj_in(x)  # [B, D, H, W]
+        batch_size, channels, height, width = x.shape
+        tokens = x.flatten(2).transpose(1, 2)  # [B, H*W, D]
+        tokens = self.transformer(tokens)
+        x = tokens.transpose(1, 2).reshape(batch_size, channels, height, width)
+        return self.proj_out(x)
+
+
+def build_decoder(decoder_cfg, in_channels: int, out_channels: int):
+    decoder_type = str(decoder_cfg.get("type", "upconv")).lower()
+    if decoder_type == "upconv":
+        return UpDecoder(in_channels=in_channels, out_channels=out_channels), decoder_type
+    if decoder_type == "trans_hybrid":
+        return (
+            TransHybridDecoder(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                trans_dim=int(decoder_cfg.get("trans_dim", 384)),
+                trans_heads=int(decoder_cfg.get("trans_heads", 8)),
+                trans_layers=int(decoder_cfg.get("trans_layers", 4)),
+                trans_ffn_ratio=int(decoder_cfg.get("trans_ffn_ratio", 4)),
+            ),
+            decoder_type,
+        )
+    raise ValueError(f"Unknown decoder.type: {decoder_type}")
+
+
 def _feature_index_for_variant(variant: str) -> int:
     return 23 if "large" in variant else 11
 
@@ -198,6 +266,7 @@ def main() -> int:
     save_resolved_configs(out["root"], dataset_cfg, train_cfg)
 
     cfm_cfg = train_cfg.get("copernicus_fm", {})
+    decoder_cfg = train_cfg.get("decoder", {})
     variant = cfm_cfg.get("variant", "vit_base_varlang_e100")
     ckpt_path = cfm_cfg.get("checkpoint_path", None)
     strict = bool(cfm_cfg.get("strict_load", False))
@@ -221,7 +290,12 @@ def main() -> int:
         for p in backbone.parameters():
             p.requires_grad = False
 
-    decoder = UpDecoder(in_channels=1024 if "large" in variant else 768, out_channels=len(target_channels)).to(device)
+    decoder, decoder_type = build_decoder(
+        decoder_cfg,
+        in_channels=1024 if "large" in variant else 768,
+        out_channels=len(target_channels),
+    )
+    decoder = decoder.to(device)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
     wave_list, bandwidth = _build_wave_bw(train_cfg)
 
@@ -244,6 +318,7 @@ def main() -> int:
 
     metrics_payload = {
         "model": "copernicus_fm_decoder",
+        "decoder_type": decoder_type,
         "device": str(device),
         "kept_patches": kept_n,
         "train_size": len(ds_train),
@@ -257,6 +332,7 @@ def main() -> int:
     write_metrics_json(out["root"] / "metrics.json", metrics_payload)
     torch.save(decoder.state_dict(), out["root"] / "copfm_decoder.pt")
     print(f"Saved outputs: {out['root']}")
+    print(f"Decoder: {decoder_type}")
     print(f"Val metrics: {val_metrics}")
     return 0
 
