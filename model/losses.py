@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 
 
 def _safe_mask(mask: torch.Tensor) -> torch.Tensor:
@@ -58,3 +59,48 @@ def masked_ssim(pred: torch.Tensor, target: torch.Tensor, valid_mask: torch.Tens
     den = (mu_x * mu_x + mu_y * mu_y + c1) * (sigma_x + sigma_y + c2)
     ssim = num / den.clamp_min(eps)
     return ssim.mean()
+
+
+def _sobel_gradients(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    x: [B, C, H, W]
+    Returns Sobel gx, gy with depthwise grouped conv.
+    """
+    channels = x.shape[1]
+    device = x.device
+    dtype = x.dtype
+
+    kx = torch.tensor(
+        [[[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]]],
+        device=device,
+        dtype=dtype,
+    ).view(1, 1, 3, 3)
+    ky = torch.tensor(
+        [[[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 1.0]]],
+        device=device,
+        dtype=dtype,
+    ).view(1, 1, 3, 3)
+    kx = kx.repeat(channels, 1, 1, 1)
+    ky = ky.repeat(channels, 1, 1, 1)
+
+    gx = F.conv2d(x, kx, padding=1, groups=channels)
+    gy = F.conv2d(x, ky, padding=1, groups=channels)
+    return gx, gy
+
+
+def masked_edge_l1_loss(pred: torch.Tensor, target: torch.Tensor, valid_mask: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """
+    L1 loss on Sobel gradient magnitude under valid mask.
+    """
+    mask = _safe_mask(valid_mask)
+    if mask.shape[1] == 1 and pred.shape[1] > 1:
+        mask = mask.expand(-1, pred.shape[1], -1, -1)
+
+    pred_gx, pred_gy = _sobel_gradients(pred)
+    tgt_gx, tgt_gy = _sobel_gradients(target)
+    pred_mag = torch.sqrt(pred_gx * pred_gx + pred_gy * pred_gy + eps)
+    tgt_mag = torch.sqrt(tgt_gx * tgt_gx + tgt_gy * tgt_gy + eps)
+
+    diff = torch.abs(pred_mag - tgt_mag) * mask
+    denom = mask.sum().clamp_min(eps)
+    return diff.sum() / denom

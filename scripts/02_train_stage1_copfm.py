@@ -13,7 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from model.copernicus_fm import build_copernicus_fm
-from model.losses import masked_l1_loss, masked_ssim
+from model.losses import masked_edge_l1_loss, masked_l1_loss, masked_ssim
 from scripts.train_stage1_common import (
     build_stage1_datasets,
     eval_metrics,
@@ -153,10 +153,11 @@ def train_one_epoch(
     wave_list,
     bandwidth,
     lambda_ssim: float,
+    lambda_edge: float,
 ):
     backbone.eval()
     decoder.train()
-    meter = {"total": 0.0, "l1": 0.0, "ssim_term": 0.0, "n": 0}
+    meter = {"total": 0.0, "l1": 0.0, "ssim_term": 0.0, "edge": 0.0, "n": 0}
 
     for batch in loader:
         inp = batch["input"].to(device)
@@ -179,7 +180,8 @@ def train_one_epoch(
         loss_l1 = masked_l1_loss(pred, tgt, mask)
         ssim_score = masked_ssim(pred, tgt, mask)
         loss_ssim_term = 1.0 - ssim_score
-        loss = loss_l1 + lambda_ssim * loss_ssim_term
+        loss_edge = masked_edge_l1_loss(pred, tgt, mask)
+        loss = loss_l1 + lambda_ssim * loss_ssim_term + lambda_edge * loss_edge
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -187,6 +189,7 @@ def train_one_epoch(
         meter["total"] += float(loss.item())
         meter["l1"] += float(loss_l1.item())
         meter["ssim_term"] += float(loss_ssim_term.item())
+        meter["edge"] += float(loss_edge.item())
         meter["n"] += 1
 
     n = max(1, meter["n"])
@@ -194,6 +197,7 @@ def train_one_epoch(
         "total": meter["total"] / n,
         "l1": meter["l1"] / n,
         "ssim_term": meter["ssim_term"] / n,
+        "edge": meter["edge"] / n,
     }
 
 
@@ -264,6 +268,7 @@ def main() -> int:
     lr = float(runtime.get("lr", LR))
     weight_decay = float(runtime.get("weight_decay", 1e-4))
     lambda_ssim = float(train_cfg.get("loss", {}).get("lambda_ssim", 0.2))
+    lambda_edge = float(train_cfg.get("loss", {}).get("lambda_edge", 0.1))
     min_valid_pixel_ratio_for_metrics = float(
         train_cfg.get("eval", {}).get("min_valid_pixel_ratio_for_metrics", MIN_VALID_PIXEL_RATIO_FOR_METRICS)
     )
@@ -334,6 +339,7 @@ def main() -> int:
             wave_list,
             bandwidth,
             lambda_ssim=lambda_ssim,
+            lambda_edge=lambda_edge,
         )
         val_metrics, sample = evaluate(
             backbone,
@@ -353,7 +359,7 @@ def main() -> int:
         print(
             f"[epoch {epoch_idx}/{epochs}] "
             f"total={final_train['total']:.6f} l1={final_train['l1']:.6f} "
-            f"ssim_term={final_train['ssim_term']:.6f} "
+            f"ssim_term={final_train['ssim_term']:.6f} edge={final_train['edge']:.6f} "
             f"val_psnr={val_metrics['psnr']} val_ssim={val_metrics['ssim']}"
         )
 
@@ -372,7 +378,11 @@ def main() -> int:
         "checkpoint": str(loaded_ckpt),
         "load_state_dict_msg": str(load_msg),
         "optimizer": {"name": "AdamW", "lr": lr, "weight_decay": weight_decay},
-        "loss": {"name": "masked_l1_plus_ssim", "lambda_ssim": lambda_ssim},
+        "loss": {
+            "name": "masked_l1_plus_ssim_plus_edge",
+            "lambda_ssim": lambda_ssim,
+            "lambda_edge": lambda_edge,
+        },
         "train": final_train,
         "val": last_val_metrics,
         "history": history,
