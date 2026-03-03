@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import torch
@@ -25,6 +24,21 @@ from scripts.train_stage1_common import (
     save_sample_rgb,
     write_metrics_json,
 )
+
+# -----------------------------------------------------------------------------
+# Runtime settings (edit here, no argparse)
+# -----------------------------------------------------------------------------
+DATASET_CONFIG_PATH = "config/dataset.yaml"
+TRAIN_CONFIG_PATH = "config/stage1_gan.yaml"
+INDEX_PATH_OVERRIDE = None  # e.g. "output/index/first_scene.index.jsonl"
+OUTPUT_ROOT = "output"
+EPOCHS = 2
+BATCH_SIZE = 4
+NUM_WORKERS = 0
+LR = 2e-4
+LAMBDA_L1 = 100.0
+SEED = 0
+MIN_VALID_PIXEL_RATIO_FOR_METRICS = 0.01
 
 
 def train_one_epoch(generator, discriminator, loader, opt_g, opt_d, device, lambda_l1: float):
@@ -68,19 +82,22 @@ def train_one_epoch(generator, discriminator, loader, opt_g, opt_d, device, lamb
 
 
 @torch.no_grad()
-def evaluate(generator, loader, device):
+def evaluate(generator, loader, device, min_valid_pixel_ratio_for_metrics: float):
     generator.eval()
-    metrics = {"psnr": 0.0, "ssim": 0.0, "n": 0}
+    metrics = {"psnr": 0.0, "ssim": 0.0, "valid_pixel_ratio": 0.0, "eligible_batches": 0, "total_batches": 0}
     sample = None
     for batch in loader:
         inp = batch["input"].to(device)
         tgt = batch["target"].to(device)
         mask = batch["valid_mask"].to(device)
         pred = generator(inp)
-        m = eval_metrics(pred, tgt, mask)
-        metrics["psnr"] += m["psnr"]
-        metrics["ssim"] += m["ssim"]
-        metrics["n"] += 1
+        m = eval_metrics(pred, tgt, mask, min_valid_pixel_ratio=min_valid_pixel_ratio_for_metrics)
+        metrics["total_batches"] += 1
+        metrics["valid_pixel_ratio"] += float(m["valid_pixel_ratio"])
+        if bool(m["eligible"]):
+            metrics["psnr"] += float(m["psnr"])
+            metrics["ssim"] += float(m["ssim"])
+            metrics["eligible_batches"] += 1
         if sample is None:
             sample = (
                 batch["patch_id"][0],
@@ -89,29 +106,23 @@ def evaluate(generator, loader, device):
                 pred[0].cpu(),
                 mask[0].cpu(),
             )
-    n = max(1, metrics["n"])
-    metrics["psnr"] /= n
-    metrics["ssim"] /= n
+    total_batches = max(1, metrics["total_batches"])
+    eligible = metrics["eligible_batches"]
+    metrics["valid_pixel_ratio"] /= total_batches
+    if eligible > 0:
+        metrics["psnr"] /= eligible
+        metrics["ssim"] /= eligible
+    else:
+        metrics["psnr"] = None
+        metrics["ssim"] = None
     return metrics, sample
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Stage1 Tiny GAN training (VV/VH -> B4/B3/B2/B8)")
-    ap.add_argument("--dataset-config", default="config/dataset.yaml")
-    ap.add_argument("--train-config", default="config/stage1_gan.yaml")
-    ap.add_argument("--index-path", default=None)
-    ap.add_argument("--output-root", default="output")
-    ap.add_argument("--epochs", type=int, default=2)
-    ap.add_argument("--batch-size", type=int, default=4)
-    ap.add_argument("--num-workers", type=int, default=0)
-    ap.add_argument("--lr", type=float, default=2e-4)
-    ap.add_argument("--lambda-l1", type=float, default=100.0)
-    ap.add_argument("--seed", type=int, default=0)
-    args = ap.parse_args()
-
-    torch.manual_seed(args.seed)
-    dataset_cfg, train_cfg = resolve_configs(args.dataset_config, args.train_config)
-    index_path = args.index_path or dataset_cfg["index"]["out_path"]
+    torch.manual_seed(SEED)
+    dataset_cfg, train_cfg = resolve_configs(DATASET_CONFIG_PATH, TRAIN_CONFIG_PATH)
+    runtime = train_cfg.get("runtime", {})
+    index_path = INDEX_PATH_OVERRIDE or dataset_cfg["index"]["out_path"]
 
     input_channels = train_cfg["io"]["input_channels"]
     target_channels = train_cfg["io"]["target_channels"]
@@ -119,7 +130,15 @@ def main() -> int:
     min_valid_ratio = float(train_cfg.get("subset_min_valid_ratio", 0.0))
     max_nan_ratio = float(train_cfg.get("subset_max_nan_ratio", 1.0))
     top_n = int(train_cfg["train"]["subset"].get("n_patches", 32))
-    seed = int(train_cfg["train"]["subset"].get("seed", args.seed))
+    seed = int(train_cfg["train"]["subset"].get("seed", runtime.get("seed", SEED)))
+    epochs = int(runtime.get("epochs", EPOCHS))
+    batch_size = int(runtime.get("batch_size", BATCH_SIZE))
+    num_workers = int(runtime.get("num_workers", NUM_WORKERS))
+    lr = float(runtime.get("lr", LR))
+    lambda_l1 = float(runtime.get("lambda_l1", LAMBDA_L1))
+    min_valid_pixel_ratio_for_metrics = float(
+        train_cfg.get("eval", {}).get("min_valid_pixel_ratio_for_metrics", MIN_VALID_PIXEL_RATIO_FOR_METRICS)
+    )
 
     ds_train, ds_val, kept_n = build_stage1_datasets(
         index_path=index_path,
@@ -132,24 +151,29 @@ def main() -> int:
         seed=seed,
     )
 
-    train_loader = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    val_loader = DataLoader(ds_val, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    train_loader = DataLoader(ds_train, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(ds_val, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     exp_id = make_exp_id(stage="stage1", model_name="gan", patch_n=top_n, seed=seed)
-    out = prepare_output_dirs(args.output_root, exp_id)
+    out = prepare_output_dirs(OUTPUT_ROOT, exp_id)
     save_resolved_configs(out["root"], dataset_cfg, train_cfg)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     generator = build_pix2pix_generator(in_channels=len(input_channels), out_channels=len(target_channels)).to(device)
     discriminator = build_patchgan_discriminator(in_channels=len(input_channels), out_channels=len(target_channels)).to(device)
-    opt_g = torch.optim.Adam(generator.parameters(), lr=args.lr, betas=(0.5, 0.999))
-    opt_d = torch.optim.Adam(discriminator.parameters(), lr=args.lr, betas=(0.5, 0.999))
+    opt_g = torch.optim.Adam(generator.parameters(), lr=lr, betas=(0.5, 0.999))
+    opt_d = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(0.5, 0.999))
 
     final_train = {}
-    for _ in range(args.epochs):
-        final_train = train_one_epoch(generator, discriminator, train_loader, opt_g, opt_d, device, args.lambda_l1)
+    for _ in range(epochs):
+        final_train = train_one_epoch(generator, discriminator, train_loader, opt_g, opt_d, device, lambda_l1)
 
-    val_metrics, sample = evaluate(generator, val_loader, device)
+    val_metrics, sample = evaluate(
+        generator,
+        val_loader,
+        device,
+        min_valid_pixel_ratio_for_metrics=min_valid_pixel_ratio_for_metrics,
+    )
     if sample is not None:
         patch_id, inp, tgt, pred, mask = sample
         save_sample_rgb(out["samples"], f"{patch_id}_gan", inp, tgt, pred, mask)

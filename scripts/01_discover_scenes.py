@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -12,29 +11,33 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from loader.scenes import discover_scenes, pick_first_scene
-from scripts.common import dump_config, ensure_dir
+from scripts.common import dump_config, ensure_dir, load_config
+
+# -----------------------------------------------------------------------------
+# Runtime settings (edit here, no argparse)
+# -----------------------------------------------------------------------------
+DATASET_CONFIG_PATH = "config/dataset.yaml"
+OUT_DIR = "output/step01_discovery"
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Step 1: Discover GeoTIFF scenes (exclude macOS sidecars).")
-    ap.add_argument("--data-root", default="/home/ey/data_2/SARtoRGB/Korea/", help="Dataset root directory.")
-    ap.add_argument("--glob", default="*.tif", help="Glob for scene discovery (default: *.tif).")
-    ap.add_argument("--out-dir", default="output/step01_discovery", help="Output directory.")
-    args = ap.parse_args()
+    dataset_cfg = load_config(DATASET_CONFIG_PATH)
+    data_root = dataset_cfg["data_root"]
+    glob = dataset_cfg.get("scene_glob", "*.tif")
 
-    out_dir = ensure_dir(args.out_dir)
+    out_dir = ensure_dir(OUT_DIR)
     dump_config(
         out_dir / "config_resolved.yaml",
         {
             "step": "step01_discovery",
-            "data_root": args.data_root,
-            "glob": args.glob,
+            "data_root": data_root,
+            "glob": glob,
             "out_dir": str(out_dir),
         },
     )
-    res = discover_scenes(args.data_root, glob=args.glob)
+    res = discover_scenes(data_root, glob=glob)
     if not res.scenes:
-        raise SystemExit(f"No scenes found under {res.data_root} with glob={args.glob}")
+        raise SystemExit(f"No scenes found under {res.data_root} with glob={glob}")
 
     first_scene = pick_first_scene(res.scenes)
     (out_dir / "scene_list.txt").write_text(
@@ -46,7 +49,7 @@ def main() -> int:
     notes = [
         f"date: {datetime.now().isoformat(timespec='seconds')}",
         f"data_root: {res.data_root}",
-        f"glob: {args.glob}",
+        f"glob: {glob}",
         f"scene_count: {len(res.scenes)}",
         f"excluded_count: {len(res.excluded)}",
         f"first_scene: {first_scene}",

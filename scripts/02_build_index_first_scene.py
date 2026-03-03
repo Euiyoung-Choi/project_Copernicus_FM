@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -13,7 +12,15 @@ if str(REPO_ROOT) not in sys.path:
 
 from loader.indexing import build_patch_index_for_scene, summarize_records, write_index_jsonl
 from loader.scenes import discover_scenes, pick_first_scene
-from scripts.common import dump_config, ensure_dir
+from scripts.common import dump_config, ensure_dir, load_config
+
+# -----------------------------------------------------------------------------
+# Runtime settings (edit here, no argparse)
+# -----------------------------------------------------------------------------
+DATASET_CONFIG_PATH = "config/dataset.yaml"
+INDEX_OUT = "output/index/first_scene.index.jsonl"
+STATS_OUT_DIR = "output/step03_index_stats"
+LIMIT_PATCHES = None  # e.g. 64 for quick run, None for all
 
 
 def _maybe_write_histograms(out_dir: Path, records):
@@ -47,47 +54,43 @@ def _maybe_write_histograms(out_dir: Path, records):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Step 3: Build patch index for first scene (256x256 windows).")
-    ap.add_argument("--data-root", default="/home/ey/data_2/SARtoRGB/Korea/", help="Dataset root directory.")
-    ap.add_argument("--glob", default="*.tif", help="Scene glob pattern.")
-    ap.add_argument("--patch-size", type=int, default=256)
-    ap.add_argument("--stride", type=int, default=256)
-    ap.add_argument("--cloud-threshold", type=float, default=60.0, help="Cloud pixel if Fmask>=T.")
-    ap.add_argument("--limit-patches", type=int, default=None, help="Optional patch limit for quick runs.")
-    ap.add_argument("--index-out", default="output/index/first_scene.index.jsonl", help="Index jsonl output path.")
-    ap.add_argument("--stats-out-dir", default="output/step03_index_stats", help="Stats output directory.")
-    args = ap.parse_args()
+    dataset_cfg = load_config(DATASET_CONFIG_PATH)
+    data_root = dataset_cfg["data_root"]
+    glob = dataset_cfg.get("scene_glob", "*.tif")
+    patch_size = int(dataset_cfg["patching"]["patch_size"])
+    stride = int(dataset_cfg["patching"]["stride"])
+    cloud_threshold = float(dataset_cfg.get("thresholds", {}).get("cloud_pixel", 30.0))
 
-    scenes = discover_scenes(args.data_root, glob=args.glob).scenes
+    scenes = discover_scenes(data_root, glob=glob).scenes
     if not scenes:
         raise SystemExit("No scenes found.")
     first_scene = pick_first_scene(scenes)
 
-    stats_dir = ensure_dir(args.stats_out_dir)
+    stats_dir = ensure_dir(STATS_OUT_DIR)
     dump_config(
         stats_dir / "config_resolved.yaml",
         {
             "step": "step02_build_index_first_scene",
-            "data_root": args.data_root,
-            "glob": args.glob,
+            "data_root": data_root,
+            "glob": glob,
             "first_scene": str(first_scene),
-            "patch_size": args.patch_size,
-            "stride": args.stride,
-            "cloud_threshold_T": args.cloud_threshold,
-            "limit_patches": args.limit_patches,
-            "index_out": args.index_out,
+            "patch_size": patch_size,
+            "stride": stride,
+            "cloud_threshold_T": cloud_threshold,
+            "limit_patches": LIMIT_PATCHES,
+            "index_out": INDEX_OUT,
             "stats_out_dir": str(stats_dir),
         },
     )
 
     records = build_patch_index_for_scene(
         first_scene,
-        patch_size=args.patch_size,
-        stride=args.stride,
-        cloud_threshold=args.cloud_threshold,
-        limit_patches=args.limit_patches,
+        patch_size=patch_size,
+        stride=stride,
+        cloud_threshold=cloud_threshold,
+        limit_patches=LIMIT_PATCHES,
     )
-    write_index_jsonl(records, args.index_out)
+    write_index_jsonl(records, INDEX_OUT)
 
     summary = summarize_records(records)
     summary_path = stats_dir / "summary.json"
@@ -96,14 +99,14 @@ def main() -> int:
     decision_md = [
         f"date: {datetime.now().isoformat(timespec='seconds')}",
         f"first_scene: {first_scene}",
-        f"patch_size: {args.patch_size}",
-        f"stride: {args.stride}",
-        f"cloud_threshold_T: {args.cloud_threshold}",
-        f"limit_patches: {args.limit_patches}",
+        f"patch_size: {patch_size}",
+        f"stride: {stride}",
+        f"cloud_threshold_T: {cloud_threshold}",
+        f"limit_patches: {LIMIT_PATCHES}",
         f"patch_count: {len(records)}",
         "",
         "selection rules (initial):",
-        "- drop: nan_ratio > 0 (conservative start)",
+        "- drop: nan_ratio filtering is deferred to training config (default relaxed)",
         "- stage1_train_candidate: valid_ratio >= 0.95",
         "- stage2_infer_candidate: cloud_ratio >= 0.10",
         "",
@@ -115,7 +118,7 @@ def main() -> int:
 
     _maybe_write_histograms(stats_dir, records)
 
-    print(f"Wrote index: {Path(args.index_out).resolve()}")
+    print(f"Wrote index: {Path(INDEX_OUT).resolve()}")
     print(f"Wrote stats: {stats_dir}")
     return 0
 

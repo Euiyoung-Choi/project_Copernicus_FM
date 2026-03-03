@@ -22,6 +22,6 @@ preprocess:
     fmask_scale: 100.0
 
 thresholds:
-  cloud_pixel: 60.0
+  cloud_pixel: 30.0
   stage1_valid_ratio_min: 0.95
   stage2_cloud_ratio_min: 0.10

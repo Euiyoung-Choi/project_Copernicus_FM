@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import torch
@@ -25,6 +24,20 @@ from scripts.train_stage1_common import (
     save_sample_rgb,
     write_metrics_json,
 )
+
+# -----------------------------------------------------------------------------
+# Runtime settings (edit here, no argparse)
+# -----------------------------------------------------------------------------
+DATASET_CONFIG_PATH = "config/dataset.yaml"
+TRAIN_CONFIG_PATH = "config/stage1_copfm.yaml"
+INDEX_PATH_OVERRIDE = None
+OUTPUT_ROOT = "output"
+EPOCHS = 2
+BATCH_SIZE = 4
+NUM_WORKERS = 0
+LR = 1e-3
+SEED = 0
+MIN_VALID_PIXEL_RATIO_FOR_METRICS = 0.01
 
 
 class UpDecoder(nn.Module):
@@ -99,10 +112,10 @@ def train_one_epoch(backbone, decoder, loader, optimizer, device, wave_list, ban
 
 
 @torch.no_grad()
-def evaluate(backbone, decoder, loader, device, wave_list, bandwidth):
+def evaluate(backbone, decoder, loader, device, wave_list, bandwidth, min_valid_pixel_ratio_for_metrics: float):
     backbone.eval()
     decoder.eval()
-    metrics = {"psnr": 0.0, "ssim": 0.0, "n": 0}
+    metrics = {"psnr": 0.0, "ssim": 0.0, "valid_pixel_ratio": 0.0, "eligible_batches": 0, "total_batches": 0}
     sample = None
     for batch in loader:
         inp = batch["input"].to(device)
@@ -119,10 +132,13 @@ def evaluate(backbone, decoder, loader, device, wave_list, bandwidth):
             kernel_size=16,
         )
         pred = decoder(intermediate[-1])
-        m = eval_metrics(pred, tgt, mask)
-        metrics["psnr"] += m["psnr"]
-        metrics["ssim"] += m["ssim"]
-        metrics["n"] += 1
+        m = eval_metrics(pred, tgt, mask, min_valid_pixel_ratio=min_valid_pixel_ratio_for_metrics)
+        metrics["total_batches"] += 1
+        metrics["valid_pixel_ratio"] += float(m["valid_pixel_ratio"])
+        if bool(m["eligible"]):
+            metrics["psnr"] += float(m["psnr"])
+            metrics["ssim"] += float(m["ssim"])
+            metrics["eligible_batches"] += 1
         if sample is None:
             sample = (
                 batch["patch_id"][0],
@@ -131,28 +147,23 @@ def evaluate(backbone, decoder, loader, device, wave_list, bandwidth):
                 pred[0].cpu(),
                 mask[0].cpu(),
             )
-    n = max(1, metrics["n"])
-    metrics["psnr"] /= n
-    metrics["ssim"] /= n
+    total_batches = max(1, metrics["total_batches"])
+    eligible = metrics["eligible_batches"]
+    metrics["valid_pixel_ratio"] /= total_batches
+    if eligible > 0:
+        metrics["psnr"] /= eligible
+        metrics["ssim"] /= eligible
+    else:
+        metrics["psnr"] = None
+        metrics["ssim"] = None
     return metrics, sample
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Stage1 Tiny Copernicus-FM training (decoder fine-tune).")
-    ap.add_argument("--dataset-config", default="config/dataset.yaml")
-    ap.add_argument("--train-config", default="config/stage1_copfm.yaml")
-    ap.add_argument("--index-path", default=None)
-    ap.add_argument("--output-root", default="output")
-    ap.add_argument("--epochs", type=int, default=2)
-    ap.add_argument("--batch-size", type=int, default=4)
-    ap.add_argument("--num-workers", type=int, default=0)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--seed", type=int, default=0)
-    args = ap.parse_args()
-
-    torch.manual_seed(args.seed)
-    dataset_cfg, train_cfg = resolve_configs(args.dataset_config, args.train_config)
-    index_path = args.index_path or dataset_cfg["index"]["out_path"]
+    torch.manual_seed(SEED)
+    dataset_cfg, train_cfg = resolve_configs(DATASET_CONFIG_PATH, TRAIN_CONFIG_PATH)
+    runtime = train_cfg.get("runtime", {})
+    index_path = INDEX_PATH_OVERRIDE or dataset_cfg["index"]["out_path"]
 
     input_channels = train_cfg["io"]["input_channels"]
     target_channels = train_cfg["io"]["target_channels"]
@@ -160,7 +171,14 @@ def main() -> int:
     min_valid_ratio = float(train_cfg.get("subset_min_valid_ratio", 0.0))
     max_nan_ratio = float(train_cfg.get("subset_max_nan_ratio", 1.0))
     top_n = int(train_cfg["train"]["subset"].get("n_patches", 32))
-    seed = int(train_cfg["train"]["subset"].get("seed", args.seed))
+    seed = int(train_cfg["train"]["subset"].get("seed", runtime.get("seed", SEED)))
+    epochs = int(runtime.get("epochs", EPOCHS))
+    batch_size = int(runtime.get("batch_size", BATCH_SIZE))
+    num_workers = int(runtime.get("num_workers", NUM_WORKERS))
+    lr = float(runtime.get("lr", LR))
+    min_valid_pixel_ratio_for_metrics = float(
+        train_cfg.get("eval", {}).get("min_valid_pixel_ratio_for_metrics", MIN_VALID_PIXEL_RATIO_FOR_METRICS)
+    )
 
     ds_train, ds_val, kept_n = build_stage1_datasets(
         index_path=index_path,
@@ -172,11 +190,11 @@ def main() -> int:
         top_n=top_n,
         seed=seed,
     )
-    train_loader = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    val_loader = DataLoader(ds_val, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    train_loader = DataLoader(ds_train, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(ds_val, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     exp_id = make_exp_id(stage="stage1", model_name="copfm", patch_n=top_n, seed=seed)
-    out = prepare_output_dirs(args.output_root, exp_id)
+    out = prepare_output_dirs(OUTPUT_ROOT, exp_id)
     save_resolved_configs(out["root"], dataset_cfg, train_cfg)
 
     cfm_cfg = train_cfg.get("copernicus_fm", {})
@@ -204,14 +222,22 @@ def main() -> int:
             p.requires_grad = False
 
     decoder = UpDecoder(in_channels=1024 if "large" in variant else 768, out_channels=len(target_channels)).to(device)
-    optimizer = torch.optim.Adam(decoder.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
     wave_list, bandwidth = _build_wave_bw(train_cfg)
 
     final_train = {}
-    for _ in range(args.epochs):
+    for _ in range(epochs):
         final_train = train_one_epoch(backbone, decoder, train_loader, optimizer, device, wave_list, bandwidth)
 
-    val_metrics, sample = evaluate(backbone, decoder, val_loader, device, wave_list, bandwidth)
+    val_metrics, sample = evaluate(
+        backbone,
+        decoder,
+        val_loader,
+        device,
+        wave_list,
+        bandwidth,
+        min_valid_pixel_ratio_for_metrics=min_valid_pixel_ratio_for_metrics,
+    )
     if sample is not None:
         patch_id, inp, tgt, pred, mask = sample
         save_sample_rgb(out["samples"], f"{patch_id}_copfm", inp, tgt, pred, mask)

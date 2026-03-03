@@ -27,3 +27,13 @@ train:
     mode: "index_top_n"
     n_patches: 64
     seed: 0
+
+runtime:
+  epochs: 2
+  batch_size: 4
+  num_workers: 0
+  lr: 0.001
+  seed: 0
+
+eval:
+  min_valid_pixel_ratio_for_metrics: 0.01

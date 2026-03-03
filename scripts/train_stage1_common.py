@@ -58,10 +58,22 @@ def build_stage1_datasets(
     return Stage1PatchDataset(train_rows, spec), Stage1PatchDataset(val_rows, spec), len(rows)
 
 
-def eval_metrics(pred: torch.Tensor, target: torch.Tensor, valid_mask: torch.Tensor) -> Dict[str, float]:
+def valid_pixel_ratio(valid_mask: torch.Tensor) -> float:
+    return float(valid_mask.float().mean().item())
+
+
+def eval_metrics(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    valid_mask: torch.Tensor,
+    min_valid_pixel_ratio: float = 0.01,
+) -> Dict[str, float | bool | None]:
+    ratio = valid_pixel_ratio(valid_mask)
+    if ratio < min_valid_pixel_ratio:
+        return {"psnr": None, "ssim": None, "valid_pixel_ratio": ratio, "eligible": False}
     psnr = float(masked_psnr(pred, target, valid_mask).item())
     ssim = float(masked_ssim(pred, target, valid_mask).item())
-    return {"psnr": psnr, "ssim": ssim}
+    return {"psnr": psnr, "ssim": ssim, "valid_pixel_ratio": ratio, "eligible": True}
 
 
 def save_sample_rgb(output_dir: Path, sample_name: str, inp, target, pred, valid_mask):
