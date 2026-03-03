@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import sys
@@ -18,19 +17,18 @@ from model.copernicus_fm import (
 )
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Check Copernicus-FM local checkpoint wiring.")
-    ap.add_argument("--repo-root", default=str(REPO_ROOT))
-    ap.add_argument("--variant", default=None, help="Checkpoint variant key.")
-    ap.add_argument("--checkpoint", default=None, help="Explicit checkpoint path.")
-    ap.add_argument(
-        "--load",
-        action="store_true",
-        help="Actually instantiate model and load checkpoint (requires torch/timm/etc).",
-    )
-    args = ap.parse_args()
+# -----------------------------------------------------------------------------
+# Edit these variables directly (no argparse).
+# -----------------------------------------------------------------------------
+REPO_ROOT_OVERRIDE = REPO_ROOT
+VARIANT = get_recommended_variant()  # e.g. "vit_base_varlang_e100"
+CHECKPOINT_PATH = None  # e.g. "/home/ey/.../CopernicusFM_ViT_base_varlang_e100.pth"
+DO_LOAD = False         # False: list only, True: instantiate + load checkpoint
+STRICT_LOAD = False
 
-    repo_root = Path(args.repo_root).resolve()
+
+def main() -> int:
+    repo_root = Path(REPO_ROOT_OVERRIDE).resolve()
     available = find_local_weights(repo_root)
     print("repo_root:", repo_root)
     print("recommended_variant:", get_recommended_variant())
@@ -39,18 +37,17 @@ def main() -> int:
     for key in sorted(available.keys()):
         print(f"  - {key}: {available[key]}")
 
-    if not args.load:
+    if not DO_LOAD:
         return 0
 
-    variant = args.variant or get_recommended_variant()
     try:
         model, msg, checkpoint = build_copernicus_fm(
             repo_root=repo_root,
-            variant=variant,
-            checkpoint_path=args.checkpoint,
-            strict=False,
+            variant=VARIANT,
+            checkpoint_path=CHECKPOINT_PATH,
+            strict=STRICT_LOAD,
         )
-        print("loaded_variant:", variant)
+        print("loaded_variant:", VARIANT)
         print("checkpoint:", checkpoint)
         print("load_state_dict_msg:", msg)
         print("model_type:", type(model).__name__)
@@ -63,4 +60,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -47,7 +47,13 @@ def _load_module(module_name: str, file_path: Path) -> ModuleType:
         raise CopernicusFMNotAvailable(f"Failed to create import spec for {file_path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as e:
+        raise CopernicusFMNotAvailable(
+            f"Missing Python dependency while importing {file_path}: {e}\n"
+            "Install required packages in your runtime env (e.g., torch, timm, einops)."
+        ) from e
     return module
 
 
@@ -56,13 +62,30 @@ def _import_upstream_model_vit(repo_root: Path) -> ModuleType:
     Load upstream Copernicus-FM `model_vit.py` without requiring package installation.
     Handles relative imports by creating a runtime package namespace.
     """
-    src_dir = repo_root / "Copernicus-FM" / "Copernicus-FM" / "src"
-    model_vit_path = src_dir / "model_vit.py"
-    if not model_vit_path.exists():
+    candidate_src_dirs = [
+        repo_root / "Copernicus-FM" / "Copernicus-FM" / "src",
+        repo_root / "Copernicus-FM" / "src",
+        repo_root / "Copernicus-FM",
+    ]
+    src_dir = None
+    for candidate in candidate_src_dirs:
+        if (candidate / "model_vit.py").exists():
+            src_dir = candidate
+            break
+
+    if src_dir is None:
+        pretty = "\n".join(str(p / "model_vit.py") for p in candidate_src_dirs)
         raise CopernicusFMNotAvailable(
-            f"Upstream model code not found: {model_vit_path}\n"
-            "Expected repo structure: Copernicus-FM/Copernicus-FM/src/model_vit.py"
+            "Upstream model code not found. Tried:\n"
+            f"{pretty}"
         )
+
+    model_vit_path = src_dir / "model_vit.py"
+
+    # Upstream source uses absolute imports such as `from util...`, `from aurora...`.
+    # Ensure `src/` itself is importable as a top-level path.
+    if str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
 
     package_name = "copernicusfm_src_runtime"
     package_spec = importlib.util.spec_from_loader(package_name, loader=None, is_package=True)
