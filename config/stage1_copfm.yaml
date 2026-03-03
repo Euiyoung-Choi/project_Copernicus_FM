@@ -1,0 +1,18 @@
+stage: "stage1"
+model: "copernicus_fm"
+
+io:
+  input_channels: [4, 5]          # VV, VH
+  target_channels: [0, 1, 2, 3]   # B4, B3, B2, B8
+
+masking:
+  cloud_threshold: 60.0
+  loss_valid_only: true
+  metrics_valid_only: true
+
+train:
+  subset:
+    mode: "index_top_n"
+    n_patches: 64
+    seed: 0
+

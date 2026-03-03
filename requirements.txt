@@ -1,0 +1,10 @@
+# Minimal dependencies to execute dataset indexing & experiments.
+# Install example:
+#   python -m pip install -r requirements.txt
+#
+# Note: `rasterio` is required to read BigTIFF GeoTIFF windows.
+numpy>=1.24
+PyYAML>=6.0
+matplotlib>=3.7
+rasterio>=1.3
+torch>=2.1

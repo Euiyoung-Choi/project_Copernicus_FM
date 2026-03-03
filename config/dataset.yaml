@@ -1,0 +1,28 @@
+data_root: "~/data_2/SARtoRGB/Korea/"
+scene_glob: "*.tif"
+
+# If provided, only these scene paths are used.
+# Use this to enforce "first_scene only" experiments.
+scene_whitelist: []
+
+patching:
+  patch_size: 256
+  stride: 256
+
+index:
+  out_path: "output/index/first_scene.index.jsonl"
+  format: "jsonl"
+
+preprocess:
+  nan_inf_policy: "to_zero"
+  norm:
+    s2_scale: 10000.0
+    s1_offset: 20.0
+    s1_scale: 20.0
+    fmask_scale: 100.0
+
+thresholds:
+  cloud_pixel: 60.0
+  stage1_valid_ratio_min: 0.95
+  stage2_cloud_ratio_min: 0.10
+
