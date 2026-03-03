@@ -1,7 +1,7 @@
 stage: "stage1"
 model: "copernicus_fm"
-subset_min_valid_ratio: 0.0
-subset_max_nan_ratio: 1.0
+subset_min_valid_ratio: 0.2
+subset_max_nan_ratio: 0.05
 copernicus_fm:
   repo_subdir: "Copernicus-FM"
   variant: "vit_base_varlang_e100"
