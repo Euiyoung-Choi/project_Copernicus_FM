@@ -201,6 +201,7 @@ class Tok2S2OnTheFlyDataset(Dataset):
         s1_date = _parse_date_or_none(row.get("s1_date"))
         delta_days = _days_since_unix_epoch(s1_date)
         patch_area_km2 = float((self.spec.meta_patch_pixels * gsd_m) ** 2 / 1_000_000.0)
+        patch_area_km2 = float(min(510000000.0, max(0.001, patch_area_km2)))
         meta = torch.tensor([lon, lat, delta_days, patch_area_km2], dtype=torch.float32)
 
         return s1_tensor, meta, s2_tensor
