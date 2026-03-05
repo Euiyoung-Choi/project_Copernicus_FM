@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -16,47 +14,25 @@ if str(REPO_ROOT) not in sys.path:
 
 from loader.tok2s2_dataset import Tok2S2OnTheFlyDataset, Tok2S2OnTheFlySpec
 from model.copernicus_fm import build_copernicus_fm
+from model.losses import masked_l1_loss
 from scripts.common import ensure_dir, load_config
+from scripts.train_stage1_common import save_sample_rgb
 
 
 CONFIG_PATH = "config/tok2s2_transformer.yaml"
 
 
-def to_rgb(x_chw: torch.Tensor, eps: float = 1e-6):
-    x = x_chw.detach().float().cpu().numpy()
-    rgb = x[[2, 1, 0], :, :]
-    lo = np.percentile(rgb, 2)
-    hi = np.percentile(rgb, 98)
-    rgb = (rgb - lo) / (hi - lo + eps)
-    rgb = np.clip(rgb, 0, 1)
-    return np.transpose(rgb, (1, 2, 0))
-
-
-def save_viz_triplet(out_dir: Path, epoch: int, step: int, gt_chw: torch.Tensor, pred_chw: torch.Tensor):
-    out_dir.mkdir(parents=True, exist_ok=True)
-    gt_rgb = to_rgb(gt_chw)
-    pred_rgb = to_rgb(pred_chw)
-    diff = np.abs(gt_rgb - pred_rgb).mean(axis=2)
-
-    fig = plt.figure(figsize=(12, 4))
-    ax1 = plt.subplot(1, 3, 1)
-    ax1.set_title("GT (RGB)")
-    ax1.imshow(gt_rgb)
-    ax1.axis("off")
-    ax2 = plt.subplot(1, 3, 2)
-    ax2.set_title("Pred (RGB)")
-    ax2.imshow(pred_rgb)
-    ax2.axis("off")
-    ax3 = plt.subplot(1, 3, 3)
-    ax3.set_title("Abs diff (mean RGB)")
-    image = ax3.imshow(diff)
-    ax3.axis("off")
-    plt.colorbar(image, fraction=0.046, pad=0.04)
-
-    output_file = out_dir / f"e{epoch:03d}_s{step:06d}.png"
-    plt.tight_layout()
-    plt.savefig(output_file, dpi=140)
-    plt.close(fig)
+def save_viz_triplet(
+    out_dir: Path,
+    epoch: int,
+    step: int,
+    inp_chw: torch.Tensor,
+    gt_chw: torch.Tensor,
+    pred_chw: torch.Tensor,
+    valid_mask_chw: torch.Tensor,
+):
+    sample_name = f"e{epoch:03d}_s{step:06d}"
+    save_sample_rgb(out_dir, sample_name, inp_chw, gt_chw, pred_chw, valid_mask_chw)
 
 
 class SimpleTransformerDecoder(nn.Module):
@@ -144,6 +120,8 @@ def main() -> int:
             s1_norm=ds_cfg.get("s1_norm", "zscore"),
             s2_norm=ds_cfg.get("s2_norm", "zscore"),
             meta_patch_pixels=int(ds_cfg.get("meta_patch_pixels", 16)),
+            fmask_band_1based=int(ds_cfg.get("fmask_band_1based", 7)),
+            cloud_threshold=float(ds_cfg.get("cloud_threshold", 30.0)),
         ),
     )
     dataloader = DataLoader(
@@ -194,7 +172,6 @@ def main() -> int:
         lr=float(tr_cfg.get("lr", 1e-4)),
         weight_decay=float(tr_cfg.get("weight_decay", 1e-4)),
     )
-    loss_fn = nn.L1Loss()
     epochs = int(tr_cfg.get("epochs", 10))
     viz_dir = ensure_dir(tr_cfg.get("viz_dir", "output/viz_tok2s2_transformer"))
     checkpoint_path = Path(tr_cfg.get("checkpoint_path", "output/tok2s2_transformer.pt")).expanduser().resolve()
@@ -206,10 +183,11 @@ def main() -> int:
     model.train()
     for epoch_idx in range(epochs):
         total_loss = 0.0
-        for step_in_epoch, (s1, meta, s2) in enumerate(dataloader):
+        for step_in_epoch, (s1, meta, s2, valid_mask) in enumerate(dataloader):
             s1 = s1.to(device, non_blocking=True)
             meta = meta.to(device, non_blocking=True)
             s2 = s2.to(device, non_blocking=True)
+            valid_mask = valid_mask.to(device, non_blocking=True)
 
             with torch.no_grad():
                 _, intermediate = backbone(
@@ -226,9 +204,9 @@ def main() -> int:
             pred = model(token)
 
             if step_in_epoch == 0:
-                save_viz_triplet(viz_dir, epoch_idx + 1, global_step, s2[0], pred[0])
+                save_viz_triplet(viz_dir, epoch_idx + 1, global_step, s1[0], s2[0], pred[0], valid_mask[0])
 
-            loss = loss_fn(pred, s2)
+            loss = masked_l1_loss(pred, s2, valid_mask)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

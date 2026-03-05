@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from loader.preprocess import valid_pixel_mask_from_fmask
 from loader.tiff_window import WindowSpec, read_window
 
 
@@ -161,6 +162,8 @@ class Tok2S2OnTheFlySpec:
     s1_norm: str = "zscore"
     s2_norm: str = "zscore"
     meta_patch_pixels: int = 16
+    fmask_band_1based: int = 7
+    cloud_threshold: float = 30.0
 
 
 class Tok2S2OnTheFlyDataset(Dataset):
@@ -169,6 +172,7 @@ class Tok2S2OnTheFlyDataset(Dataset):
       - s1: (C,H,W) normalized
       - meta: (4,) [lon,lat,delta_days,patch_area_km2]
       - s2: (C,H,W) normalized
+      - valid_mask: (1,H,W) float32 where Fmask < threshold
     """
 
     def __init__(self, csv_path: str | Path, spec: Tok2S2OnTheFlySpec):
@@ -197,6 +201,10 @@ class Tok2S2OnTheFlyDataset(Dataset):
             s2 = zscore_per_band(s2)
         s2_tensor = torch.from_numpy(s2.astype(np.float32, copy=False))
 
+        fmask = read_window(row["s2_path"], win, bands=(int(self.spec.fmask_band_1based),))[0]
+        valid_mask = valid_pixel_mask_from_fmask(fmask, threshold=float(self.spec.cloud_threshold)).astype(np.float32)
+        mask_tensor = torch.from_numpy(valid_mask[None, ...])
+
         lon, lat, gsd_m = window_center_lonlat_and_gsd(row["s1_path"], win)
         s1_date = _parse_date_or_none(row.get("s1_date"))
         delta_days = _days_since_unix_epoch(s1_date)
@@ -204,4 +212,4 @@ class Tok2S2OnTheFlyDataset(Dataset):
         patch_area_km2 = float(min(510000000.0, max(0.001, patch_area_km2)))
         meta = torch.tensor([lon, lat, delta_days, patch_area_km2], dtype=torch.float32)
 
-        return s1_tensor, meta, s2_tensor
+        return s1_tensor, meta, s2_tensor, mask_tensor

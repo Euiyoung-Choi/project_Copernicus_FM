@@ -2,6 +2,8 @@ dataset:
   csv: "output/index/all_scenes.index.jsonl"
   s1_band_indices_1based: [5, 6]
   s2_band_indices_1based: [1, 2, 3, 4]
+  fmask_band_1based: 7
+  cloud_threshold: 30.0
   s1_norm: "zscore"
   s2_norm: "zscore"
   meta_patch_pixels: 16
