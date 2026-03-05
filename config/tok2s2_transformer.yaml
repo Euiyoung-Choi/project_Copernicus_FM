@@ -1,0 +1,40 @@
+dataset:
+  csv: "/home/ey/data_2/SARtoRGB/Korea/pairs_tiles_256.csv"
+  s1_band_indices_1based: [1, 2]
+  s2_band_indices_1based: [1, 2, 3, 4]
+  s1_norm: "zscore"
+  s2_norm: "zscore"
+  meta_patch_pixels: 16
+
+copernicus_fm:
+  variant: "vit_base_varlang_e100"
+  checkpoint_path: null
+  strict_load: false
+  freeze_backbone: true
+
+spectral:
+  wave: 50000000.0
+  bandwidth: 1000000000.0
+
+model:
+  embed_dim: 768
+  nhead: 8
+  depth: 6
+  c_out: 4
+  patch: 16
+  hp: 16
+  wp: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  refine_channels: 64
+  refine_depth: 3
+
+train:
+  device: "cuda"
+  batch_size: 32
+  num_workers: 4
+  epochs: 10
+  lr: 0.0001
+  weight_decay: 0.0001
+  viz_dir: "output/viz_tok2s2_transformer"
+  checkpoint_path: "output/tok2s2_transformer.pt"

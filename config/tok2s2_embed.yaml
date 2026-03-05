@@ -1,0 +1,17 @@
+input_csv: "/home/ey/data_2/SARtoRGB/Korea/pairs_tiles_256.csv"
+output_csv: "output/pairs_tiles_256_with_tokens.csv"
+token_dir: "output/tokens_s1_copfm"
+device: "cuda"
+limit_rows: null
+
+s1_band_indices_1based: [1, 2]
+kernel_size: 16
+meta_patch_pixels: 16
+spectral_wave: 50000000.0
+spectral_bandwidth: 1000000000.0
+
+copernicus_fm:
+  variant: "vit_base_varlang_e100"
+  checkpoint_path: null
+  strict_load: false
+
