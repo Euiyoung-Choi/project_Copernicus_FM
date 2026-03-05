@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -14,7 +15,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from loader.tok2s2_dataset import Tok2S2OnTheFlyDataset, Tok2S2OnTheFlySpec
 from model.copernicus_fm import build_copernicus_fm
-from model.losses import masked_l1_loss
+from model.losses import masked_edge_l1_loss, masked_l1_loss, masked_ssim
 from scripts.common import ensure_dir, load_config
 from scripts.train_stage1_common import save_sample_rgb
 
@@ -108,6 +109,7 @@ def main() -> int:
     mz_cfg = cfg["model"]
     cfm_cfg = cfg["copernicus_fm"]
     spc_cfg = cfg["spectral"]
+    ablation_cfg = cfg.get("ablation", {})
 
     device_name = tr_cfg.get("device", "cuda")
     device = torch.device(device_name if (device_name == "cpu" or torch.cuda.is_available()) else "cpu")
@@ -117,8 +119,8 @@ def main() -> int:
         spec=Tok2S2OnTheFlySpec(
             s1_band_indices_1based=[int(v) for v in ds_cfg.get("s1_band_indices_1based", [1, 2])],
             s2_band_indices_1based=[int(v) for v in ds_cfg.get("s2_band_indices_1based", [1, 2, 3, 4])],
-            s1_norm=ds_cfg.get("s1_norm", "zscore"),
-            s2_norm=ds_cfg.get("s2_norm", "zscore"),
+            s1_norm=ds_cfg.get("s1_norm", "step2"),
+            s2_norm=ds_cfg.get("s2_norm", "step2"),
             meta_patch_pixels=int(ds_cfg.get("meta_patch_pixels", 16)),
             fmask_band_1based=int(ds_cfg.get("fmask_band_1based", 7)),
             cloud_threshold=float(ds_cfg.get("cloud_threshold", 30.0)),
@@ -165,61 +167,101 @@ def main() -> int:
         dropout=float(mz_cfg.get("dropout", 0.0)),
         refine_channels=int(mz_cfg.get("refine_channels", 64)),
         refine_depth=int(mz_cfg.get("refine_depth", 3)),
-    ).to(device)
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=float(tr_cfg.get("lr", 1e-4)),
-        weight_decay=float(tr_cfg.get("weight_decay", 1e-4)),
     )
+
+    lr = float(tr_cfg.get("lr", 1e-4))
+    weight_decay = float(tr_cfg.get("weight_decay", 1e-4))
     epochs = int(tr_cfg.get("epochs", 10))
-    viz_dir = ensure_dir(tr_cfg.get("viz_dir", "output/viz_tok2s2_transformer"))
-    checkpoint_path = Path(tr_cfg.get("checkpoint_path", "output/tok2s2_transformer.pt")).expanduser().resolve()
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    base_viz_dir = ensure_dir(tr_cfg.get("viz_dir", "output/viz_tok2s2_transformer"))
+    base_checkpoint_path = Path(tr_cfg.get("checkpoint_path", "output/tok2s2_transformer.pt")).expanduser().resolve()
+    base_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     wave_list = [float(spc_cfg.get("wave", 5e7))] * int(len(ds_cfg.get("s1_band_indices_1based", [1, 2])))
     bandwidth = [float(spc_cfg.get("bandwidth", 1e9))] * int(len(ds_cfg.get("s1_band_indices_1based", [1, 2])))
+    lambda_ssim = float(tr_cfg.get("lambda_ssim", 0.2))
+    lambda_edge = float(tr_cfg.get("lambda_edge", 0.1))
+    meta_modes = ablation_cfg.get("meta_modes", ["real"])
+    if not isinstance(meta_modes, list) or len(meta_modes) == 0:
+        meta_modes = ["real"]
 
-    global_step = 0
-    model.train()
-    for epoch_idx in range(epochs):
-        total_loss = 0.0
-        for step_in_epoch, (s1, meta, s2, valid_mask) in enumerate(dataloader):
-            s1 = s1.to(device, non_blocking=True)
-            meta = meta.to(device, non_blocking=True)
-            s2 = s2.to(device, non_blocking=True)
-            valid_mask = valid_mask.to(device, non_blocking=True)
+    results = {}
+    for meta_mode in meta_modes:
+        model = model.to(device)
+        model.apply(lambda m: m.reset_parameters() if hasattr(m, "reset_parameters") else None)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        viz_dir = ensure_dir(base_viz_dir / f"meta_{meta_mode}")
+        checkpoint_path = base_checkpoint_path.with_name(f"{base_checkpoint_path.stem}_meta_{meta_mode}.pt")
 
-            with torch.no_grad():
-                _, intermediate = backbone(
-                    s1,
-                    meta,
-                    wave_list,
-                    bandwidth,
-                    language_embed=None,
-                    input_mode="spectral",
-                    kernel_size=16,
-                )
-                feature = intermediate[-1]
-                token = feature.permute(0, 2, 3, 1).contiguous()
-            pred = model(token)
+        global_step = 0
+        model.train()
+        history = []
+        for epoch_idx in range(epochs):
+            meter = {"total": 0.0, "l1": 0.0, "ssim_term": 0.0, "edge": 0.0, "n": 0}
+            for step_in_epoch, (s1, meta, s2, valid_mask) in enumerate(dataloader):
+                s1 = s1.to(device, non_blocking=True)
+                meta = meta.to(device, non_blocking=True)
+                s2 = s2.to(device, non_blocking=True)
+                valid_mask = valid_mask.to(device, non_blocking=True)
+                if meta_mode == "nan":
+                    meta = torch.full_like(meta, float("nan"))
 
-            if step_in_epoch == 0:
-                save_viz_triplet(viz_dir, epoch_idx + 1, global_step, s1[0], s2[0], pred[0], valid_mask[0])
+                with torch.no_grad():
+                    _, intermediate = backbone(
+                        s1,
+                        meta,
+                        wave_list,
+                        bandwidth,
+                        language_embed=None,
+                        input_mode="spectral",
+                        kernel_size=16,
+                    )
+                    feature = intermediate[-1]
+                    token = feature.permute(0, 2, 3, 1).contiguous()
+                pred = model(token)
 
-            loss = masked_l1_loss(pred, s2, valid_mask)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                if step_in_epoch == 0:
+                    save_viz_triplet(viz_dir, epoch_idx + 1, global_step, s1[0], s2[0], pred[0], valid_mask[0])
 
-            total_loss += float(loss.item())
-            global_step += 1
+                loss_l1 = masked_l1_loss(pred, s2, valid_mask)
+                loss_ssim_term = 1.0 - masked_ssim(pred, s2, valid_mask)
+                loss_edge = masked_edge_l1_loss(pred, s2, valid_mask)
+                loss = loss_l1 + lambda_ssim * loss_ssim_term + lambda_edge * loss_edge
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-        print(f"epoch {epoch_idx + 1}/{epochs} loss={total_loss / max(1, len(dataloader)):.6f}")
+                meter["total"] += float(loss.item())
+                meter["l1"] += float(loss_l1.item())
+                meter["ssim_term"] += float(loss_ssim_term.item())
+                meter["edge"] += float(loss_edge.item())
+                meter["n"] += 1
+                global_step += 1
 
-    torch.save({"model": model.state_dict()}, checkpoint_path)
+            denom = max(1, meter["n"])
+            epoch_metrics = {
+                "total": meter["total"] / denom,
+                "l1": meter["l1"] / denom,
+                "ssim_term": meter["ssim_term"] / denom,
+                "edge": meter["edge"] / denom,
+            }
+            history.append({"epoch": epoch_idx + 1, **epoch_metrics})
+            print(
+                f"[meta={meta_mode}] epoch {epoch_idx + 1}/{epochs} "
+                f"total={epoch_metrics['total']:.6f} l1={epoch_metrics['l1']:.6f} "
+                f"ssim_term={epoch_metrics['ssim_term']:.6f} edge={epoch_metrics['edge']:.6f}"
+            )
+
+        torch.save({"model": model.state_dict()}, checkpoint_path)
+        results[meta_mode] = {
+            "checkpoint": str(checkpoint_path),
+            "history": history,
+            "last": history[-1] if history else None,
+        }
+
+    summary_path = base_checkpoint_path.with_name(f"{base_checkpoint_path.stem}_ablation_summary.json")
+    summary_path.write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Loaded checkpoint: {loaded_ckpt}")
     print(f"load_state_dict_msg: {load_msg}")
-    print(f"Saved: {checkpoint_path}")
+    print(f"Saved ablation summary: {summary_path}")
     return 0
 
 

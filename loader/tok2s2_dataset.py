@@ -35,6 +35,20 @@ def zscore_per_band(x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     return out
 
 
+def step2_norm_s2(x: np.ndarray) -> np.ndarray:
+    out = x.astype(np.float32, copy=True)
+    out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+    out = out / 10000.0
+    return out
+
+
+def step2_norm_s1(x: np.ndarray) -> np.ndarray:
+    out = x.astype(np.float32, copy=True)
+    out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+    out = (out + 20.0) / 20.0
+    return out
+
+
 def _read_csv_rows(csv_path: str | Path) -> List[Dict[str, str]]:
     path = Path(csv_path).expanduser().resolve()
     with path.open("r", encoding="utf-8", newline="") as handle:
@@ -159,8 +173,8 @@ def window_center_lonlat_and_gsd(scene_path: str | Path, win: WindowSpec):
 class Tok2S2OnTheFlySpec:
     s1_band_indices_1based: Sequence[int]
     s2_band_indices_1based: Sequence[int]
-    s1_norm: str = "zscore"
-    s2_norm: str = "zscore"
+    s1_norm: str = "step2"
+    s2_norm: str = "step2"
     meta_patch_pixels: int = 16
     fmask_band_1based: int = 7
     cloud_threshold: float = 30.0
@@ -194,11 +208,15 @@ class Tok2S2OnTheFlyDataset(Dataset):
         s1 = read_window(row["s1_path"], win, bands=tuple(int(v) for v in self.spec.s1_band_indices_1based))
         if self.spec.s1_norm == "zscore":
             s1 = zscore_per_band(s1)
+        elif self.spec.s1_norm == "step2":
+            s1 = step2_norm_s1(s1)
         s1_tensor = torch.from_numpy(s1.astype(np.float32, copy=False))
 
         s2 = read_window(row["s2_path"], win, bands=tuple(int(v) for v in self.spec.s2_band_indices_1based))
         if self.spec.s2_norm == "zscore":
             s2 = zscore_per_band(s2)
+        elif self.spec.s2_norm == "step2":
+            s2 = step2_norm_s2(s2)
         s2_tensor = torch.from_numpy(s2.astype(np.float32, copy=False))
 
         fmask = read_window(row["s2_path"], win, bands=(int(self.spec.fmask_band_1based),))[0]

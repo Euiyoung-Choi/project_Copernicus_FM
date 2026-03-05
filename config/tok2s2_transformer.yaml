@@ -4,8 +4,8 @@ dataset:
   s2_band_indices_1based: [1, 2, 3, 4]
   fmask_band_1based: 7
   cloud_threshold: 30.0
-  s1_norm: "zscore"
-  s2_norm: "zscore"
+  s1_norm: "step2"
+  s2_norm: "step2"
   meta_patch_pixels: 16
 
 copernicus_fm:
@@ -38,5 +38,10 @@ train:
   epochs: 100
   lr: 0.0001
   weight_decay: 0.0001
+  lambda_ssim: 0.2
+  lambda_edge: 0.1
   viz_dir: "output/viz_tok2s2_transformer"
   checkpoint_path: "output/tok2s2_transformer.pt"
+
+ablation:
+  meta_modes: ["real", "nan"]
