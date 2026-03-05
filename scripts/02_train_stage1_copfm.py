@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from pathlib import Path
 
 import torch
@@ -73,8 +72,10 @@ class TransHybridDecoder(nn.Module):
         trans_heads: int = 8,
         trans_layers: int = 4,
         trans_ffn_ratio: int = 4,
+        use_2d_sincos_pos: bool = True,
     ):
         super().__init__()
+        self.use_2d_sincos_pos = use_2d_sincos_pos
         self.proj_in = nn.Conv2d(in_channels, trans_dim, kernel_size=1)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=trans_dim,
@@ -103,11 +104,31 @@ class TransHybridDecoder(nn.Module):
             nn.Sigmoid(),
         )
 
+    @staticmethod
+    def _build_2d_sincos_pos_embed(height: int, width: int, dim: int, device, dtype):
+        if dim % 4 != 0:
+            raise ValueError(f"trans_dim must be divisible by 4 for 2D sin-cos PE, got {dim}")
+        quarter = dim // 4
+        y = torch.arange(height, device=device, dtype=dtype)
+        x = torch.arange(width, device=device, dtype=dtype)
+        yy, xx = torch.meshgrid(y, x, indexing="ij")
+        yy = yy.reshape(-1, 1)
+        xx = xx.reshape(-1, 1)
+        omega = torch.arange(quarter, device=device, dtype=dtype) / float(max(1, quarter))
+        omega = torch.pow(torch.tensor(10000.0, device=device, dtype=dtype), -omega)
+        out_y = yy * omega[None, :]
+        out_x = xx * omega[None, :]
+        pos = torch.cat([torch.sin(out_x), torch.cos(out_x), torch.sin(out_y), torch.cos(out_y)], dim=1)
+        return pos.unsqueeze(0)
+
     def forward(self, x):
         # x: [B, C, 16, 16]
         x = self.proj_in(x)  # [B, D, H, W]
         batch_size, channels, height, width = x.shape
         tokens = x.flatten(2).transpose(1, 2)  # [B, H*W, D]
+        if self.use_2d_sincos_pos:
+            pos = self._build_2d_sincos_pos_embed(height, width, channels, tokens.device, tokens.dtype)
+            tokens = tokens + pos
         tokens = self.transformer(tokens)
         x = tokens.transpose(1, 2).reshape(batch_size, channels, height, width)
         return self.proj_out(x)
@@ -126,6 +147,7 @@ def build_decoder(decoder_cfg, in_channels: int, out_channels: int):
                 trans_heads=int(decoder_cfg.get("trans_heads", 8)),
                 trans_layers=int(decoder_cfg.get("trans_layers", 4)),
                 trans_ffn_ratio=int(decoder_cfg.get("trans_ffn_ratio", 4)),
+                use_2d_sincos_pos=bool(decoder_cfg.get("trans_use_2d_sincos_pos", True)),
             ),
             decoder_type,
         )
