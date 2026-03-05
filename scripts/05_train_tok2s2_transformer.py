@@ -23,7 +23,7 @@ CONFIG_PATH = "config/tok2s2_transformer.yaml"
 
 
 def to_rgb(x_chw: torch.Tensor, eps: float = 1e-6):
-    x = x.detach().float().cpu().numpy()
+    x = x_chw.detach().float().cpu().numpy()
     rgb = x[[2, 1, 0], :, :]
     lo = np.percentile(rgb, 2)
     hi = np.percentile(rgb, 98)
