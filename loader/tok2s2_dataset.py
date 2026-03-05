@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -40,6 +41,42 @@ def _read_csv_rows(csv_path: str | Path) -> List[Dict[str, str]]:
         return [dict(row) for row in reader]
 
 
+def _rows_from_index_jsonl(index_path: Path) -> List[Dict[str, str]]:
+    """
+    Convert stage index jsonl rows into pair-like rows.
+    Assumes one fused 7-band GeoTIFF per scene where S1/S2 are in the same file.
+    """
+    rows: List[Dict[str, str]] = []
+    with index_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text:
+                continue
+            item = json.loads(text)
+            scene_path = str(item["scene_path"])
+            rows.append(
+                {
+                    "s1_path": scene_path,
+                    "s2_path": scene_path,
+                    "tile_row": str(int(item["y"])),
+                    "tile_col": str(int(item["x"])),
+                    "tile_size": str(int(item.get("w", 256))),
+                    "s1_date": "",
+                    "s2_date": "",
+                }
+            )
+    return rows
+
+
+def _read_rows(csv_or_jsonl_path: str | Path) -> List[Dict[str, str]]:
+    path = Path(csv_or_jsonl_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Input manifest not found: {path}")
+    if path.suffix.lower() == ".jsonl":
+        return _rows_from_index_jsonl(path)
+    return _read_csv_rows(path)
+
+
 @dataclass(frozen=True)
 class Tok2S2Spec:
     s2_band_indices_1based: Sequence[int]
@@ -50,7 +87,7 @@ class Tok2S2Spec:
 
 class Tok2S2Dataset(Dataset):
     def __init__(self, csv_path: str | Path, spec: Tok2S2Spec):
-        self.rows = _read_csv_rows(csv_path)
+        self.rows = _read_rows(csv_path)
         self.spec = spec
         if len(self.rows) == 0:
             raise RuntimeError(f"No rows found in csv: {csv_path}")
@@ -135,7 +172,7 @@ class Tok2S2OnTheFlyDataset(Dataset):
     """
 
     def __init__(self, csv_path: str | Path, spec: Tok2S2OnTheFlySpec):
-        self.rows = _read_csv_rows(csv_path)
+        self.rows = _read_rows(csv_path)
         self.spec = spec
         if len(self.rows) == 0:
             raise RuntimeError(f"No rows found in csv: {csv_path}")

@@ -1,6 +1,6 @@
 dataset:
-  csv: "/home/ey/data_2/SARtoRGB/Korea/pairs_tiles_256.csv"
-  s1_band_indices_1based: [1, 2]
+  csv: "output/index/all_scenes.index.jsonl"
+  s1_band_indices_1based: [5, 6]
   s2_band_indices_1based: [1, 2, 3, 4]
   s1_norm: "zscore"
   s2_norm: "zscore"
